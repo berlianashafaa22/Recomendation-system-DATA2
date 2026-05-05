@@ -274,12 +274,9 @@ if page == "🏠 Home":
     st.markdown("---")
     st.markdown("### 🚀 Mulai Eksplorasi")
     col1, col2, col3 = st.columns(3)
-    col1.info("📊 **Eksplorasi Data**
-Distribusi genre, dekade, dan co-occurrence")
-    col2.success("🤖 **Sistem Rekomendasi**
-Cari rekomendasi lagu secara interaktif")
-    col3.warning("💼 **Implikasi Manajerial**
-Temuan dan rekomendasi pengembangan platform")
+    col1.info("📊 **Eksplorasi Data** Distribusi genre, dekade, dan co-occurrence")
+    col2.success("🤖 **Sistem Rekomendasi** Cari rekomendasi lagu secara interaktif")
+    col3.warning("💼 **Implikasi Manajerial** Temuan dan rekomendasi pengembangan platform")
 
 # ─────────────────────────────────────────
 # HALAMAN 2: EDA
