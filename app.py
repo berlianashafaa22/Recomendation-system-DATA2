@@ -28,9 +28,9 @@ def load_all_data():
     df_raw = pd.read_csv("music.csv")
     df_clean = df_raw.copy()
     df_clean = df_clean[~df_clean["genres"].str.contains("no genres listed")]
-    
+
     genres_series = df_clean["genres"].str.split("|").apply(lambda x: tuple(g.strip() for g in x))
-    
+
     df_clean["num_genres"] = genres_series.apply(len)
     df_clean["decade"] = (df_clean["year"] // 10 * 10).astype(str) + "s"
 
@@ -71,11 +71,11 @@ def get_similarity_scores_on_demand(song_title, df_clean, feature_matrix):
     row_indices = np.where(df_clean["title"] == song_title)[0]
     if len(row_indices) == 0:
         return {}
-    idx = row_indices[0] 
-    
+    idx = row_indices[0]
+
     song_vector = feature_matrix[idx].reshape(1, -1)
     sim_scores = cosine_similarity(song_vector, feature_matrix).flatten()
-    
+
     titles = df_clean["title"].values
     return {titles[i]: float(sim_scores[i]) for i in range(len(titles)) if titles[i] != song_title}
 
@@ -114,12 +114,12 @@ def pseudo_cf_recommend(song_title, df_clean, genre_rules, top_n=5):
     mask = df_clean["title"] != song_title
     overlap_counts = df_clean.loc[mask, related_cols].sum(axis=1)
     valid_indices = overlap_counts[overlap_counts > 0].index
-    
+
     if len(valid_indices) == 0: return pd.DataFrame(columns=["Judul", "Genre", "Tahun", "CF Score"])
-        
+
     cf_scores = overlap_counts.loc[valid_indices] / len(related_genres)
     top_indices = cf_scores.sort_values(ascending=False).head(top_n).index
-    
+
     result = []
     for idx in top_indices:
         row = df_clean.loc[idx]
@@ -135,7 +135,7 @@ def hybrid_recommend(song_title, df_clean, feature_matrix, genre_rules, top_n=5)
 
     cb_scores = get_similarity_scores_on_demand(song_title, df_clean, feature_matrix)
     cf_result = pseudo_cf_recommend(song_title, df_clean, genre_rules, top_n=50)
-    
+
     cf_scores = {row["Judul"]: float(row["CF Score"]) for _, row in cf_result.iterrows()} if len(cf_result) > 0 else {}
 
     if cb_scores:
@@ -148,7 +148,7 @@ def hybrid_recommend(song_title, df_clean, feature_matrix, genre_rules, top_n=5)
     all_songs = set(list(cb_scores.keys()) + list(cf_scores.keys()))
     hybrid_scores = {s: 0.5 * cb_scores.get(s, 0) + 0.5 * cf_scores.get(s, 0) for s in all_songs}
     top_songs = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    
+
     result = []
     for title, score in top_songs:
         rows = df_clean[df_clean["title"] == title]
@@ -160,7 +160,7 @@ def hybrid_recommend(song_title, df_clean, feature_matrix, genre_rules, top_n=5)
     return pd.DataFrame(result)
 
 # ─────────────────────────────────────────
-# EKSEKUSI DATA 
+# EKSEKUSI DATA
 # ─────────────────────────────────────────
 with st.spinner("Memuat dan memproses data..."):
     df_raw, df_clean, unique_genres, feature_matrix, genre_rules, cooccurrence = load_all_data()
@@ -294,7 +294,7 @@ elif page == "🤖 Sistem Rekomendasi":
         else:
             for i, row in result.iterrows():
                 c1, c2, c3 = st.columns([3, 2, 1])
-                c1.markdown(f"**{i+1}. {row['Judul']}**")
+                c1.markdown(f"**{i+1}. {str(row['Judul']).strip()}**")
                 c2.caption(f"🎸 {row['Genre']} | 📅 {row['Tahun']}")
                 c3.progress(float(min(row[score_col], 1.0)))
 
@@ -304,16 +304,185 @@ elif page == "🤖 Sistem Rekomendasi":
 elif page == "🔬 Analisis Genre Rules":
     st.title("🔬 Analisis Genre Association Rules")
     st.markdown("---")
+ 
+    # ── Slider filter ──────────────────────────────────────────
     col1, col2, col3 = st.columns(3)
-    min_sup, min_conf, min_lift = col1.slider("Min Support", 0.01, 0.5, 0.05), col2.slider("Min Conf", 0.1, 1.0, 0.3), col3.slider("Min Lift", 1.0, 10.0, 1.0)
-
-    filtered = genre_rules[(genre_rules["support"] >= min_sup) & (genre_rules["confidence"] >= min_conf) & (genre_rules["lift"] >= min_lift)].copy()
+    min_sup  = col1.slider("Min Support",    0.01, 0.50, 0.05, step=0.01)
+    min_conf = col2.slider("Min Confidence", 0.10, 1.00, 0.30, step=0.05)
+    min_lift = col3.slider("Min Lift",       1.00, 10.0, 1.00, step=0.10)
+ 
+    filtered = genre_rules[
+        (genre_rules["support"]    >= min_sup)  &
+        (genre_rules["confidence"] >= min_conf) &
+        (genre_rules["lift"]       >= min_lift)
+    ].copy()
     filtered["antecedents"] = filtered["antecedents"].apply(lambda x: ", ".join(list(x)))
     filtered["consequents"] = filtered["consequents"].apply(lambda x: ", ".join(list(x)))
-
+ 
     st.metric("Rules yang memenuhi filter", len(filtered))
-    st.dataframe(filtered[["antecedents","consequents","support","confidence","lift"]].round(4).reset_index(drop=True))
-
+    st.dataframe(
+        filtered[["antecedents", "consequents", "support", "confidence", "lift"]]
+        .round(4).reset_index(drop=True)
+    )
+ 
+    st.markdown("---")
+ 
+    # ── Tab sensitivity analysis ───────────────────────────────
+    tab1, tab2, tab3 = st.tabs([
+        "📈 Sensitivity: Min Support",
+        "📉 Sensitivity: Min Lift",
+        "🥧 Komposisi Fitur"
+    ])
+ 
+    # ── TAB 1: Sensitivity min_support ─────────────────────────
+    with tab1:
+        st.subheader("Pengaruh Min Support terhadap Jumlah Rules")
+        st.caption("Grafik ini menjadi dasar justifikasi pemilihan min_support = 0.05")
+ 
+        support_values = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.15]
+        rules_count, itemset_count = [], []
+ 
+        with st.spinner("Menghitung sensitivity..."):
+            te2 = TransactionEncoder()
+            genres_series_raw = df_clean["genres"].str.split("|").apply(
+                lambda x: [g.strip() for g in x]
+            )
+            te_arr2 = te2.fit_transform(genres_series_raw.tolist())
+            genre_enc2 = pd.DataFrame(te_arr2, columns=te2.columns_)
+ 
+            for sup in support_values:
+                freq_temp = apriori(genre_enc2, min_support=sup, use_colnames=True, max_len=2)
+                itemset_count.append(len(freq_temp))
+                if len(freq_temp) > 0:
+                    r_temp = association_rules(freq_temp, metric="lift", min_threshold=1.0)
+                    rules_count.append(len(r_temp))
+                else:
+                    rules_count.append(0)
+ 
+        sens_df = pd.DataFrame({
+            "Min Support": support_values,
+            "Frequent Itemsets": itemset_count,
+            "Association Rules": rules_count
+        })
+ 
+        col_a, col_b = st.columns(2)
+        with col_a:
+            fig1 = px.line(
+                sens_df, x="Min Support", y="Association Rules",
+                markers=True, title="Jumlah Rules vs Min Support",
+                color_discrete_sequence=["steelblue"]
+            )
+            fig1.add_vline(x=0.05, line_dash="dash", line_color="red",
+                           annotation_text="Nilai kita: 0.05",
+                           annotation_position="top right")
+            fig1.update_traces(marker=dict(size=9))
+            st.plotly_chart(fig1, use_container_width=True)
+ 
+        with col_b:
+            fig2 = px.line(
+                sens_df, x="Min Support", y="Frequent Itemsets",
+                markers=True, title="Jumlah Frequent Itemset vs Min Support",
+                color_discrete_sequence=["mediumseagreen"]
+            )
+            fig2.add_vline(x=0.05, line_dash="dash", line_color="red",
+                           annotation_text="Nilai kita: 0.05",
+                           annotation_position="top right")
+            fig2.update_traces(marker=dict(size=9))
+            st.plotly_chart(fig2, use_container_width=True)
+ 
+        st.dataframe(sens_df, use_container_width=True)
+ 
+        idx_chosen = support_values.index(0.05)
+        st.info(
+            f"📌 **Justifikasi:** Min support = 0.05 menghasilkan **{rules_count[idx_chosen]} rules** — "
+            f"cukup untuk rekomendasi tanpa terlalu noise. "
+            f"Support terlalu rendah (0.01) menghasilkan {rules_count[0]} rules yang kebanyakan tidak representatif, "
+            f"sedangkan support terlalu tinggi (≥0.10) mulai menghasilkan sangat sedikit rules."
+        )
+ 
+    # ── TAB 2: Sensitivity min_lift ─────────────────────────────
+    with tab2:
+        st.subheader("Pengaruh Min Lift terhadap Jumlah Rules")
+        st.caption("Min support dikunci di 0.05, hanya lift yang divariasikan")
+ 
+        lift_values = [1.0, 1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0]
+        lift_rules_count = []
+ 
+        with st.spinner("Menghitung sensitivity lift..."):
+            freq_base = apriori(genre_enc2, min_support=0.05, use_colnames=True, max_len=2)
+            for lv in lift_values:
+                if len(freq_base) > 0:
+                    r_temp = association_rules(freq_base, metric="lift", min_threshold=lv)
+                    lift_rules_count.append(len(r_temp))
+                else:
+                    lift_rules_count.append(0)
+ 
+        lift_df = pd.DataFrame({
+            "Min Lift": lift_values,
+            "Rules Terbentuk": lift_rules_count
+        })
+ 
+        fig3 = px.line(
+            lift_df, x="Min Lift", y="Rules Terbentuk",
+            markers=True, title="Jumlah Rules vs Min Lift (min_support=0.05 fixed)",
+            color_discrete_sequence=["coral"]
+        )
+        fig3.add_vline(x=1.0, line_dash="dash", line_color="red",
+                       annotation_text="Nilai kita: 1.0",
+                       annotation_position="top right")
+        fig3.update_traces(marker=dict(size=9))
+        st.plotly_chart(fig3, use_container_width=True)
+ 
+        st.dataframe(lift_df, use_container_width=True)
+ 
+        st.info(
+            f"📌 **Justifikasi:** Min lift = 1.0 dipilih untuk **memaksimalkan coverage** Pseudo-CF. "
+            f"Lift > 1 sudah menjamin hubungan antar genre bukan sekadar kebetulan. "
+            f"Menaikkan lift ke 1.5+ akan mengurangi rules secara signifikan dan membatasi kemampuan rekomendasi."
+        )
+ 
+    # ── TAB 3: Komposisi Fitur ──────────────────────────────────
+    with tab3:
+        st.subheader("Komposisi Feature Matrix: Genre vs Year")
+        st.caption("Justifikasi penggunaan MinMaxScaler untuk normalisasi year")
+ 
+        n_genre = len(unique_genres)
+        n_year  = 1
+        total   = n_genre + n_year
+        pct_genre = round(n_genre / total * 100, 1)
+        pct_year  = round(n_year  / total * 100, 1)
+ 
+        col_x, col_y = st.columns(2)
+ 
+        with col_x:
+            fig4 = px.pie(
+                values=[pct_genre, pct_year],
+                names=[f"Genre Features ({n_genre} fitur)", "Year Feature (1 fitur, normalized)"],
+                title="Proporsi Fitur dalam Feature Matrix",
+                color_discrete_sequence=["steelblue", "coral"],
+                hole=0.3
+            )
+            st.plotly_chart(fig4, use_container_width=True)
+ 
+        with col_y:
+            fig5 = px.bar(
+                x=[f"Genre\n({n_genre} fitur)", "Year\n(1 fitur)"],
+                y=[pct_genre, pct_year],
+                title="Kontribusi Fitur (%)",
+                color=[f"Genre\n({n_genre} fitur)", "Year\n(1 fitur)"],
+                color_discrete_sequence=["steelblue", "coral"],
+                text=[f"{pct_genre}%", f"{pct_year}%"]
+            )
+            fig5.update_traces(textposition="outside")
+            fig5.update_layout(showlegend=False)
+            st.plotly_chart(fig5, use_container_width=True)
+ 
+        st.info(
+            f"📌 **Justifikasi MinMaxScaler:** Year (rentang 1926–2010) harus dinormalisasi ke skala 0–1 "
+            f"agar tidak mendominasi Cosine Similarity secara artificial. "
+            f"Setelah normalisasi, year hanya berkontribusi **{pct_year}%** dari total fitur — "
+            f"genre tetap mendominasi perhitungan kemiripan secara alami."
+        )
 # ─────────────────────────────────────────
 # HALAMAN 5: EVALUASI
 # ─────────────────────────────────────────
